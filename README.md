@@ -1,0 +1,143 @@
+# agent-budget
+
+> Zero-dependency token/cost budget enforcement for LLM agents — part of the [arsenal](https://github.com/darshjme/arsenal) collection.
+
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Zero Dependencies](https://img.shields.io/badge/dependencies-zero-green.svg)]()
+
+## Features
+
+- **Per-session limits** — token and cost caps for individual sessions
+- **Per-day limits** — rolling 24-hour token and cost budgets
+- **Per-model limits** — separate quotas for each model
+- **Cost estimation** — built-in rates for GPT-4o, Claude, Gemini; fully configurable
+- **Soft alerts** — warnings at a configurable threshold (default 80%)
+- **Hard stops** — raise `BudgetExceededError` before a call executes
+- **Alert callbacks** — hook custom actions on budget warnings/overruns
+- **BudgetManager** — multi-scope registry for multi-tenant or multi-user deployments
+- **Thread-safe** — concurrent LLM calls handled correctly
+- **Zero dependencies** — stdlib only
+
+## Installation
+
+```bash
+pip install agent-budget
+```
+
+## Quick Start
+
+```python
+from agent_budget import Budget, BudgetScope, ModelRates
+
+# Define a scope with limits
+scope = BudgetScope(
+    name="my-session",
+    max_tokens_per_session=50_000,
+    max_cost_per_session_usd=1.00,
+    max_cost_per_day_usd=5.00,
+    alert_at_pct=0.8,   # warn at 80%
+    hard_stop=True,     # raise BudgetExceededError at 100%
+)
+
+budget = Budget(scope)
+
+# Optional: register an alert callback
+budget.on_alert(lambda alert: print(f"[{alert.level.value}] {alert.message}"))
+
+# Before calling the LLM, check prospectively
+budget.check("gpt-4o", input_tokens=800, output_tokens=200)
+
+# After the call, record actual usage
+record = budget.record(
+    session_id="user-123",
+    model="gpt-4o",
+    input_tokens=800,
+    output_tokens=200,
+)
+
+print(f"Call cost: ${record.cost_usd:.4f}")
+print(budget.summary())
+```
+
+## Multi-Scope with BudgetManager
+
+```python
+from agent_budget import BudgetManager, BudgetScope
+
+mgr = BudgetManager()
+
+# Register different scopes per user / team
+mgr.register(BudgetScope(name="user-alice", max_cost_per_day_usd=2.00))
+mgr.register(BudgetScope(name="user-bob",   max_cost_per_day_usd=5.00))
+
+# Record usage for alice
+mgr.record("user-alice", session_id="s1", model="gpt-4o-mini",
+           input_tokens=100, output_tokens=50)
+
+# Global dashboard
+print(mgr.all_summaries())
+```
+
+## Custom Rates
+
+```python
+from agent_budget import Budget, BudgetScope, ModelRates
+
+custom_rates = {
+    "my-custom-model": ModelRates(input_per_1k=0.001, output_per_1k=0.002),
+}
+scope = BudgetScope(name="s", max_cost_per_session_usd=10.0)
+budget = Budget(scope, rates=custom_rates)
+```
+
+## Built-in Model Rates
+
+| Model | Input / 1K | Output / 1K |
+|-------|-----------|-------------|
+| gpt-4o | $0.005 | $0.015 |
+| gpt-4o-mini | $0.00015 | $0.0006 |
+| claude-3-opus | $0.015 | $0.075 |
+| claude-3-sonnet | $0.003 | $0.015 |
+| claude-3-haiku | $0.00025 | $0.00125 |
+| gemini-1.5-pro | $0.00125 | $0.005 |
+| gemini-1.5-flash | $0.000075 | $0.0003 |
+
+## API Reference
+
+### `BudgetScope`
+
+| Field | Description |
+|-------|-------------|
+| `max_tokens_per_session` | Session token hard cap |
+| `max_cost_per_session_usd` | Session cost hard cap |
+| `max_tokens_per_day` | Daily token hard cap |
+| `max_cost_per_day_usd` | Daily cost hard cap |
+| `max_tokens_per_model` | Dict `{model: tokens}` |
+| `max_cost_per_model_usd` | Dict `{model: usd}` |
+| `alert_at_pct` | Fraction for soft warning (default 0.8) |
+| `hard_stop` | Raise on exceed if True |
+
+### `Budget`
+
+| Method | Description |
+|--------|-------------|
+| `check(model, input_tokens, output_tokens)` | Prospective check, no recording |
+| `record(session_id, model, input, output)` | Record and enforce limits |
+| `estimate(model, input_tokens, output_tokens)` | Cost estimate only |
+| `on_alert(callback)` | Register alert callback |
+| `summary()` | Dict of current usage |
+| `reset_session()` | Clear session counters |
+
+## Tests
+
+```bash
+pip install pytest
+pytest tests/ -v
+```
+
+35 tests covering all limit types, alerts, hard stops, and thread safety.
+
+## License
+
+MIT © Darshankumar Joshi
